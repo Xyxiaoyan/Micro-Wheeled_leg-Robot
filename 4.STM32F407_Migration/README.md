@@ -2,7 +2,24 @@
 
 This directory contains a ported version of the Micro-Wheeled-Leg Robot firmware
 targeting the **STM32F407** microcontroller (e.g. STM32F407VGT6 on the Discovery
-board or a custom PCB).
+board or a custom PCB), built with **PlatformIO**.
+
+## Project structure
+
+```
+4.STM32F407_Migration/
+├── platformio.ini          PlatformIO project configuration
+├── README.md               This file
+├── include/
+│   ├── robot.h             Robot state struct + binary packet protocol (WiFi/JSON removed)
+│   ├── comm.h              UART communication module header (replaces wifi.h)
+│   └── Servo_STS3032.h     STS3032 servo driver header (unchanged)
+└── src/
+    ├── main.cpp            Main application (ported from wl_pro_robot.ino)
+    ├── robot.cpp           Binary packet parser (replaces JSON WebSocket handler)
+    ├── comm.cpp            UART control loop (replaces wifi.cpp)
+    └── Servo_STS3032.cpp   STS3032 servo driver (unchanged)
+```
 
 ---
 
@@ -10,7 +27,7 @@ board or a custom PCB).
 
 | Item | ESP32 (original) | STM32F407 (ported) |
 |---|---|---|
-| **Build system** | Arduino IDE + esp32 board package | Arduino IDE + STM32duino board package |
+| **Build system** | Arduino IDE + esp32 board package | **PlatformIO** (`ststm32` platform, `arduino` framework) |
 | **Motor control** | SimpleFOC v2 | SimpleFOC v2 (STM32 supported natively) |
 | **IMU** | MPU6050_tockn (I2C) | MPU6050_tockn (I2C, unchanged) |
 | **Encoders** | AS5600 via I2C | AS5600 via I2C (unchanged) |
@@ -47,16 +64,15 @@ LED (battery)       PD12                    GPIO output (Discovery green LED)
 
 ## Software dependencies
 
-Install the following libraries in the Arduino IDE (Library Manager) **before**
-compiling the ported firmware:
+PlatformIO automatically downloads all dependencies declared in `platformio.ini`
+on the first build.  No manual library installation is needed.
 
-| Library | Version tested | Notes |
+| Library | `lib_deps` entry | Notes |
 |---|---|---|
-| **STM32duino** board package | ≥ 2.6.0 | Boards Manager → "STM32 MCU based boards" |
-| **SimpleFOC** | 2.3.x | Motor / sensor / PID / LPF / Commander |
-| **MPU6050_tockn** | 1.x | IMU driver (unchanged) |
+| **SimpleFOC** v2.3.x | `askuric/Simple FOC @ ^2.3.3` | Motor / sensor / PID / LPF / Commander |
+| **MPU6050_tockn** v1.x | `tockn/MPU6050_tockn @ ^1.1.0` | IMU driver (unchanged from ESP32 version) |
 
-The following ESP32-only libraries are **removed** and do not need to be installed:
+The following ESP32-only libraries are **removed** and do not appear in `lib_deps`:
 
 - `WiFi`, `WebServer`, `WebSocketsServer`
 - `ArduinoJson`
@@ -112,24 +128,57 @@ To restore WiFi control without redesigning the PCB:
 
 ---
 
-## How to build
+## How to build with PlatformIO
 
-1. Install the STM32duino board package:  
-   `File → Preferences → Additional Boards Manager URLs`  
-   → add `https://github.com/stm32duino/BoardManagerFiles/raw/main/package_stmicroelectronics_index.json`
+### Prerequisites
 
-2. `Tools → Board → STM32 MCU based boards → Generic STM32F4 series`
+- [Visual Studio Code](https://code.visualstudio.com/) + [PlatformIO IDE extension](https://platformio.org/install/ide?install=vscode)  
+  **or** the [PlatformIO Core CLI](https://docs.platformio.org/en/latest/core/installation/index.html)
+- ST-Link V2 (or V3) programmer connected to the board's SWD header
 
-3. `Tools → Board part number → Generic F407VGTx` (or your exact variant)
+### Steps
 
-4. `Tools → USB support → CDC (generic Serial supersede U(S)ART)`  
-   This maps `Serial` to USB Virtual COM so the Commander works over USB.
+```bash
+# 1. Open this directory as a PlatformIO project
+cd 4.STM32F407_Migration
 
-5. `Tools → Upload method → STM32CubeProgrammer (DFU)` (or SWD/JTAG)
+# 2. Build (downloads platform + libraries automatically on first run)
+pio run
 
-6. Install all required libraries (see table above).
+# 3. Flash to the Discovery board via ST-Link
+pio run --target upload
 
-7. Open `firmware/wl_robot_stm32/wl_robot_stm32.ino` and click **Upload**.
+# 4. Open serial monitor (Commander / battery voltage output)
+pio device monitor
+```
+
+In VS Code, use the PlatformIO sidebar buttons: **Build**, **Upload**, **Monitor**.
+
+### Switching target boards
+
+`platformio.ini` ships with two environment definitions:
+
+| Environment | Board | Upload method |
+|---|---|---|
+| `disco_f407vg` *(default)* | STM32F407VG Discovery | ST-Link |
+| `genericSTM32F407` *(commented out)* | Any STM32F407VGT6 | DFU or ST-Link |
+
+Uncomment and adjust the `[env:genericSTM32F407]` block in `platformio.ini` for
+a custom PCB, then run `pio run -e genericSTM32F407`.
+
+### USB Virtual COM (Commander)
+
+The build flag `-DUSBD_USE_CDC` in `platformio.ini` routes Arduino's `Serial`
+to the USB Virtual COM port.  This means the same USB cable used for flashing
+also carries the SimpleFOC Commander and battery voltage output at 115200 baud.
+
+If you prefer a dedicated UART console (e.g. via a USB-to-UART dongle on
+PA2/PA3), remove `-DUSBD_USE_CDC` and `-DHAL_PCD_MODULE_ENABLED` from
+`build_flags` and add:
+```cpp
+HardwareSerial DebugSerial(PA3, PA2);  // RX=PA3, TX=PA2  (USART2)
+Commander command = Commander(DebugSerial);
+```
 
 ---
 
